@@ -51,8 +51,16 @@ input[type="date"].field{-webkit-appearance:none;appearance:none;width:100%;min-
 
   <section id="graficos" class="hidden"><div class="chartbox"><div class="sectionTitle">Gasto por categoría</div><div id="catChart"></div></div><div class="chartbox"><div class="sectionTitle">Gasto por cuenta</div><div id="accountChart"></div></div><div class="chartbox"><div class="sectionTitle">Gasto por día</div><div class="bars" id="dayBars"></div><div class="days" id="dayLabels"></div></div></section>
 </div>
-<script>
+<script src="https://cdn.jsdelivr.net/npm/@supabase/supabase-js@2"></script>
+  <script>
 (function(){
+  const SUPABASE_URL = 'https://seaqegjqhgomenzmeilx.supabase.co';
+const SUPABASE_KEY = 'sb_publishable_e_FgACT95CFalj-bUwkQ9w_7MfBT11q';
+
+const supabase = window.supabase.createClient(
+  SUPABASE_URL,
+  SUPABASE_KEY
+);
 const EXP='mis-gastos-v2-expenses', ACC='mis-gastos-v2-accounts';
 const colors={Comida:'#6b93ff',Transporte:'#e87a7a',Hogar:'#b48ae0',Ocio:'#4fbe8d',Salud:'#e0a15d',Otros:'#98989d'};
 let expenses=JSON.parse(localStorage.getItem(EXP)||'[]');
@@ -61,7 +69,21 @@ if(!accounts){accounts=[{id:'prestamos',name:'Préstamos',balance:0},{id:'pensio
 // Migrate old Kimi expenses if they exist.
 try{const old=JSON.parse(localStorage.getItem('mis-gastos-v1')||'[]');if(old.length&&!expenses.length){expenses=old.map(e=>({...e,source:'propinas'}));saveExpenses()}}catch(e){}
 let view=new Date();view.setDate(1);const money=new Intl.NumberFormat('es-PE',{style:'currency',currency:'PEN',minimumFractionDigits:2});const fmtMonth=new Intl.DateTimeFormat('es-PE',{month:'long',year:'numeric'});const fmtDay=new Intl.DateTimeFormat('es-PE',{day:'numeric',month:'short'});
-const $=id=>document.getElementById(id);function saveExpenses(){localStorage.setItem(EXP,JSON.stringify(expenses))}function saveAccounts(){localStorage.setItem(ACC,JSON.stringify(accounts))}function uid(){return Date.now().toString(36)+Math.random().toString(36).slice(2)}function current(){return expenses.filter(e=>{const d=new Date(e.date+'T00:00:00');return d.getFullYear()===view.getFullYear()&&d.getMonth()===view.getMonth()})}function account(id){return accounts.find(a=>a.id===id)}function setOptions(id,includeAll=false){const s=$(id);s.innerHTML=(includeAll?'<option value="all">Todas</option>':'')+accounts.map(a=>`<option value="${a.id}">${esc(a.name)} — ${money.format(a.balance)}</option>`).join('')}
+const $=id=>document.getElementById(id);async function saveExpenses(){
+  const { error } = await supabase
+    .from('app_data')
+    .upsert({
+      id: 1,
+      data: {
+        expenses: expenses,
+        accounts: accounts
+      }
+    });
+
+  if(error){
+    console.error('Error guardando:', error);
+  }
+}function saveAccounts(){localStorage.setItem(ACC,JSON.stringify(accounts))}function uid(){return Date.now().toString(36)+Math.random().toString(36).slice(2)}function current(){return expenses.filter(e=>{const d=new Date(e.date+'T00:00:00');return d.getFullYear()===view.getFullYear()&&d.getMonth()===view.getMonth()})}function account(id){return accounts.find(a=>a.id===id)}function setOptions(id,includeAll=false){const s=$(id);s.innerHTML=(includeAll?'<option value="all">Todas</option>':'')+accounts.map(a=>`<option value="${a.id}">${esc(a.name)} — ${money.format(a.balance)}</option>`).join('')}
 function esc(s){return String(s??'').replace(/[&<>"']/g,m=>({'&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;',"'":'&#039;'}[m]))}
 function refreshSelects(){['source','depositAccount','fromAccount','toAccount'].forEach(id=>setOptions(id));$('toAccount').value=accounts.find(a=>a.id!==$('fromAccount').value)?.id||accounts[0]?.id;}
 function render(){
@@ -73,7 +95,31 @@ function renderAccounts(){$('accountCards').innerHTML=accounts.map(a=>{const spe
 function renderCharts(){const list=current();const byCat={};list.forEach(e=>byCat[e.category]=(byCat[e.category]||0)+e.amount);const maxCat=Math.max(1,...Object.values(byCat));$('catChart').innerHTML=Object.entries(byCat).sort((a,b)=>b[1]-a[1]).map(([n,v])=>`<div class="barrow"><span>${esc(n)}</span><div class="barbg"><div class="bar" style="width:${v/maxCat*100}%;background:${colors[n]||colors.Otros}"></div></div><span class="right">${money.format(v)}</span></div>`).join('')||'<div class="empty">Aún no hay gastos.</div>';
  const byAcc={};list.forEach(e=>{const n=account(e.source)?.name||'Sin cuenta';byAcc[n]=(byAcc[n]||0)+e.amount});const maxA=Math.max(1,...Object.values(byAcc));$('accountChart').innerHTML=Object.entries(byAcc).sort((a,b)=>b[1]-a[1]).map(([n,v])=>`<div class="barrow"><span>${esc(n)}</span><div class="barbg"><div class="bar" style="width:${v/maxA*100}%;background:var(--purple)"></div></div><span class="right">${money.format(v)}</span></div>`).join('')||'<div class="empty">Aún no hay gastos.</div>';
  const days=new Date(view.getFullYear(),view.getMonth()+1,0).getDate();let vals=Array(days).fill(0);list.forEach(e=>vals[+e.date.slice(8)-1]+=e.amount);const maxD=Math.max(1,...vals);$('dayBars').innerHTML=vals.map(v=>`<div class="daycol"><div class="daybar" style="height:${Math.max(2,v/maxD*100)}%" title="${money.format(v)}"></div></div>`).join('');$('dayLabels').innerHTML=vals.map((_,i)=>`<span>${i+1}</span>`).join('');}
-function msg(t){$('expenseMsg').textContent=t;setTimeout(()=>$('expenseMsg').textContent='',2200)}
+async function loadData(){
+  const { data: row, error } = await supabase
+    .from('app_data')
+    .select('data')
+    .eq('id', 1)
+    .maybeSingle();
+
+  if(error){
+    console.error('Error cargando datos:', error);
+    refreshSelects();
+    render();
+    return;
+  }
+
+  if(row && row.data){
+    expenses = row.data.expenses || [];
+    accounts = row.data.accounts || [];
+  }else{
+    await saveExpenses();
+  }
+
+  refreshSelects();
+  render();
+}
+  function msg(t){$('expenseMsg').textContent=t;setTimeout(()=>$('expenseMsg').textContent='',2200)}
 $('date').value=new Date().toISOString().slice(0,10);$('addExpense').onclick=()=>{const amount=Number($('amount').value),source=$('source').value;if(!(amount>0))return msg('Ingresa un monto válido.');const a=account(source);if(!a)return msg('Selecciona una cuenta.');if(a.balance<amount)return msg(`Saldo insuficiente en ${a.name}.`);a.balance=Math.round((a.balance-amount)*100)/100;expenses.push({id:uid(),amount,date:$('date').value,category:$('category').value,note:$('note').value.trim(),source});saveAccounts();saveExpenses();$('amount').value='';$('note').value='';msg(`Gasto guardado. ${a.name}: ${money.format(a.balance)}`);render()};
 $('prev').onclick=()=>{view.setMonth(view.getMonth()-1);render()};$('next').onclick=()=>{view.setMonth(view.getMonth()+1);render()};
 $('table').addEventListener('click',e=>{const b=e.target.closest('[data-del]');if(!b)return;const x=expenses.find(v=>v.id===b.dataset.del);if(!x)return;const a=account(x.source);if(a)a.balance=Math.round((a.balance+x.amount)*100)/100;expenses=expenses.filter(v=>v.id!==x.id);saveAccounts();saveExpenses();render()});
@@ -85,7 +131,7 @@ document.querySelectorAll('.tab').forEach(b=>b.onclick=()=>{document.querySelect
 $('fromAccount').onchange=()=>{const other=accounts.find(a=>a.id!==$('fromAccount').value);if(other)$('toAccount').value=other.id};
 $('exportBtn').onclick=()=>{const rows=[['fecha','categoria','descripcion','cuenta','monto'],...expenses.map(e=>[e.date,e.category,(e.note||'').replace(/"/g,'""'),account(e.source)?.name||'',e.amount.toFixed(2)])];const blob=new Blob(['\ufeff'+rows.map(r=>r.map(v=>`"${String(v).replace(/"/g,'""')}"`).join(',')).join('\n')],{type:'text/csv;charset=utf-8'});const a=document.createElement('a');a.href=URL.createObjectURL(blob);a.download='mis-gastos-respaldo.csv';a.click();URL.revokeObjectURL(a.href)};
 $('importBtn').onclick=()=>$('fileInput').click();$('fileInput').onchange=()=>{const f=$('fileInput').files[0];if(!f)return;const r=new FileReader();r.onload=()=>{const lines=String(r.result).replace(/^\ufeff/,'').split(/\r?\n/).filter(Boolean);let n=0;for(let i=1;i<lines.length;i++){const p=lines[i].split(',').map(x=>x.replace(/^"|"$/g,''));if(p.length<5||!/\d{4}-\d{2}-\d{2}/.test(p[0]))continue;const a=accounts.find(x=>x.name===p[3]);if(!a)continue;const amount=Number(p[4]);if(!(amount>0))continue;expenses.push({id:uid(),date:p[0],category:p[1]||'Otros',note:p[2]||'',source:a.id,amount});n++}saveExpenses();render();msg(`${n} gastos importados.`)};r.readAsText(f)};
-refreshSelects();render();
+loadData();
 })();
 </script>
 </body></html>
